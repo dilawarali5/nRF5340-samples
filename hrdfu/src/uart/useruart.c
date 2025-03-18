@@ -1,4 +1,5 @@
 
+ /* Includes ----------------------------------------------------------- */
 #include "useruart.h"
 #include <zephyr/kernel.h>
 #include <zephyr/sys/ring_buffer.h>
@@ -7,7 +8,11 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/device.h>
 
-
+/* Private defines ---------------------------------------------------- */
+/* Private enumerate/structure ---------------------------------------- */
+/* Private macros ----------------------------------------------------- */
+/* Public variables --------------------------------------------------- */
+/* Private variables -------------------------------------------------- */
 static struct device *uart_dev;
 uint8_t serial_rx_buf[MY_RING_BUF_SIZE];
 uint8_t OTABuffer[MY_RING_BUF_SIZE];
@@ -17,9 +22,53 @@ uint32_t FileSize = 0;
 uint32_t totalBytesReceived = 0;
 K_MSGQ_DEFINE(uartEventQueue, sizeof(uint32_t), 64, 1);
 
+/* Private function prototypes ---------------------------------------- */
+
 static void uart_irq_handler(const struct device *dev, void *context);
 
+/* Private function definitions ---------------------------------------- */
 
+/**
+ * @brief UART interrupt handler callback function
+ *
+ * Called when UART interrupts occur. Reads available data from the UART FIFO
+ * one byte at a time and stores it in serial_rx_buf. Updates the last interrupt
+ * time for timeout detection.
+ *
+ * @param dev Pointer to the UART device triggering the interrupt
+ * @param context User-provided context data (unused)
+ */
+static void uart_irq_handler(const struct device *dev, void *context)
+{
+    ARG_UNUSED(context);
+
+    // Bail if nothing to do.
+    if (!uart_irq_update(dev))
+    {
+        printk("failed\r\n");
+        return;
+    }
+
+    if (uart_irq_rx_ready(dev)) 
+    {
+        uart_fifo_read(dev, &serial_rx_buf[totalBytesReceived], 1);
+        totalBytesReceived++;
+    }
+    lastInterruptTime = k_uptime_get_32();
+}
+
+
+/* Global Function definitions ----------------------------------------------- */
+
+/**
+ * @brief Validates the integrity of a received UART packet
+ *
+ * Examines the received data in serial_rx_buf to verify it follows the expected 
+ * packet format with valid start and end bytes. If valid, copies the packet data 
+ * to OTABuffer and processes any special packets (e.g., file size information).
+ *
+ * @return The packet type if valid, 0 if invalid packet
+ */
 int verifyPacket()
 {
 
@@ -56,25 +105,16 @@ int verifyPacket()
     return 0;
 }
 
-static void uart_irq_handler(const struct device *dev, void *context)
-{
-    ARG_UNUSED(context);
 
-    // Bail if nothing to do.
-	if (!uart_irq_update(dev))
-    {
-        printk("failed\r\n");
-        return;
-    }
 
-	if (uart_irq_rx_ready(dev)) 
-    {
-        uart_fifo_read(dev, &serial_rx_buf[totalBytesReceived], 1);
-        totalBytesReceived++;
-	}
-    lastInterruptTime = k_uptime_get_32();
-}
-
+/**
+ * @brief Initializes the UART communication module
+ *
+ * Sets up the UART device, verifies it's ready, and configures the interrupt handler
+ * to receive data. Enables UART receive interrupts.
+ *
+ * @return 0 on success, 1 if the device is not found or init fails
+ */
 int init_serial_comms_handler(void)
 {
     int success = 0;
@@ -95,6 +135,14 @@ int init_serial_comms_handler(void)
     return success;
 }
 
+/**
+ * @brief Sends data through the UART interface
+ *
+ * Transmits an array of bytes through the configured UART interface using polling mode.
+ *
+ * @param data Pointer to the array of bytes to transmit
+ * @param size Number of bytes to transmit
+ */
 void SendUartData(uint8_t *data, uint32_t size)
 {
     for (uint32_t i = 0; i < size; i++)
@@ -103,6 +151,13 @@ void SendUartData(uint8_t *data, uint32_t size)
     }
 }
 
+/**
+ * @brief Waits for a message in the UART event queue
+ *
+ * Blocks the calling thread until a message is available in the UART event queue.
+ *
+ * @return Error code from k_msgq_get operation
+ */
 int waitForUartMessageQueue(void)
 {
     uint32_t msg;
@@ -110,7 +165,14 @@ int waitForUartMessageQueue(void)
     return err;
 }
 
+/**
+ * @brief Resets the UART receive buffer counter
+ *
+ * Clears the bytes received counter to prepare for a new packet reception.
+ */
 void ResetRxBuffer(void)
 {
     totalBytesReceived = 0;
 }
+
+/* End of file -------------------------------------------------------- */
